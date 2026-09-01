@@ -10,8 +10,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -19,14 +24,45 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Grant Execute Permission for Gradlew
-        run: chmod +x ./gradlew
+      - name: Build Web & Convert to Android
+        run: |
+          # اگر پروژه وب با package.json باشد:
+          if [ -f "package.json" ]; then
+            npm install
+            npm run build || true
+            
+            # اگر پوشه خروجی build نبود پوشه dist را می سازد
+            OUTPUT_DIR="dist"
+            if [ -d "build" ]; then
+              OUTPUT_DIR="build"
+            elif [ -d "out" ]; then
+              OUTPUT_DIR="out"
+            fi
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+            # نصب و راه اندازی خروجی اندروید با Capacitor
+            npm install @capacitor/core @capacitor/cli @capacitor/android
+            npx cap init "Medical Clinic" "com.medicalclinic.app" --web-dir "$OUTPUT_DIR"
+            npx cap add android
+            npx cap sync android
+          fi
+
+      - name: Build APK with Gradle
+        run: |
+          # پیدا کردن مسیر اجرای gradlew
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug
+          elif [ -f "./android/gradlew" ]; then
+            cd android
+            chmod +x ./gradlew
+            ./gradlew assembleDebug
+          else
+            echo "Gradle wrapper not found!"
+            exit 1
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: medical-clinic-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: "**/build/outputs/apk/debug/*.apk"
