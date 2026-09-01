@@ -22,16 +22,40 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Generate Missing Keystore and Mock Configs
+      - name: Generate Keystore and Google Services
         run: |
-          # 1. ساخت فایل خودکار debug.keystore در ریشه و در پوشه app
+          # ساخت فایل کلید debug.keystore
           keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           cp debug.keystore app/debug.keystore 2>/dev/null || true
 
-          # 2. ایجاد فایل موقت google-services.json جهت عبور از خطای پلاگین Google Services
+          # ساخت google-services.json با پکیج نیم دقیق پروژه
           MOCK_SERVICES='{
-            "project_info": {"project_number": "1234567890", "project_id": "medical-clinic-app", "storage_bucket": "medical-clinic-app.appspot.com"},
-            "client": [{"client_info": {"mobilesdk_app_id": "1:1234567890:android:abcdef", "android_client_info": {"package_name": "com.medicalclinic.app"}}, "api_key": [{"current_key": "dummy_key"}]}],
+            "project_info": {
+              "project_number": "123456789012",
+              "project_id": "medical-clinic-app",
+              "storage_bucket": "medical-clinic-app.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:123456789012:android:abcdef0123456789",
+                  "android_client_info": {
+                    "package_name": "com.aistudio.medicalclinic.clnxapp"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [
+                  {
+                    "current_key": "AIzaSyDummyKeyForBuildPass12345"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              }
+            ],
             "configuration_version": "1"
           }'
           echo "$MOCK_SERVICES" > app/google-services.json
