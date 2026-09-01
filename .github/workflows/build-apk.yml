@@ -22,11 +22,26 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
+      - name: Generate Missing Keystore and Mock Configs
+        run: |
+          # 1. ساخت فایل خودکار debug.keystore در ریشه و در پوشه app
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          cp debug.keystore app/debug.keystore 2>/dev/null || true
+
+          # 2. ایجاد فایل موقت google-services.json جهت عبور از خطای پلاگین Google Services
+          MOCK_SERVICES='{
+            "project_info": {"project_number": "1234567890", "project_id": "medical-clinic-app", "storage_bucket": "medical-clinic-app.appspot.com"},
+            "client": [{"client_info": {"mobilesdk_app_id": "1:1234567890:android:abcdef", "android_client_info": {"package_name": "com.medicalclinic.app"}}, "api_key": [{"current_key": "dummy_key"}]}],
+            "configuration_version": "1"
+          }'
+          echo "$MOCK_SERVICES" > app/google-services.json
+          echo "$MOCK_SERVICES" > google-services.json
+
       - name: Generate Wrapper and Build Debug APK
         run: |
           gradle wrapper
           chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug --stacktrace --no-configuration-cache
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
