@@ -24,14 +24,20 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Build Web & Convert to Android
+      - name: Locate and Prepare Project
+        id: prep
         run: |
-          # اگر پروژه وب با package.json باشد:
-          if [ -f "package.json" ]; then
+          # پیدا کردن محل قرارگیری پروژه
+          PKG_PATH=$(find . -name "package.json" -not -path "*/node_modules/*" | head -n 1)
+          GRADLEW_PATH=$(find . -name "gradlew" -not -path "*/node_modules/*" | head -n 1)
+
+          if [ -n "$PKG_PATH" ]; then
+            PROJ_DIR=$(dirname "$PKG_PATH")
+            echo "Web project found at: $PROJ_DIR"
+            cd "$PROJ_DIR"
             npm install
             npm run build || true
-            
-            # اگر پوشه خروجی build نبود پوشه dist را می سازد
+
             OUTPUT_DIR="dist"
             if [ -d "build" ]; then
               OUTPUT_DIR="build"
@@ -39,25 +45,32 @@ jobs:
               OUTPUT_DIR="out"
             fi
 
-            # نصب و راه اندازی خروجی اندروید با Capacitor
+            # ساخت پوشه خروجی در صورت عدم وجود
+            mkdir -p "$OUTPUT_DIR"
+
             npm install @capacitor/core @capacitor/cli @capacitor/android
             npx cap init "Medical Clinic" "com.medicalclinic.app" --web-dir "$OUTPUT_DIR"
             npx cap add android
             npx cap sync android
+          elif [ -n "$GRADLEW_PATH" ]; then
+            echo "Android native project found at: $(dirname "$GRADLEW_PATH")"
+          else
+            echo "Listing all files in repository for debug:"
+            find . -maxdepth 3 -not -path '*/.*'
+            exit 1
           fi
 
-      - name: Build APK with Gradle
+      - name: Build APK
         run: |
-          # پیدا کردن مسیر اجرای gradlew
-          if [ -f "./gradlew" ]; then
+          GRADLEW_PATH=$(find . -name "gradlew" -not -path "*/node_modules/*" | head -n 1)
+          if [ -n "$GRADLEW_PATH" ]; then
+            TARGET_DIR=$(dirname "$GRADLEW_PATH")
+            echo "Building APK in directory: $TARGET_DIR"
+            cd "$TARGET_DIR"
             chmod +x ./gradlew
-            ./gradlew assembleDebug
-          elif [ -f "./android/gradlew" ]; then
-            cd android
-            chmod +x ./gradlew
-            ./gradlew assembleDebug
+            ./gradlew assembleDebug --stacktrace
           else
-            echo "Gradle wrapper not found!"
+            echo "Error: No gradlew found anywhere!"
             exit 1
           fi
 
