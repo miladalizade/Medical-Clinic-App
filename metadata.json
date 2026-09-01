@@ -1,0 +1,7 @@
+{
+  "name": "Medical Clinic",
+  "description": "A modern and complete medical clinic introduction app featuring articles, photo gallery, Aparat video player, doctor introduction, and consultation form.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
