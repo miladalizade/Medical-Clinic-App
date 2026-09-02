@@ -88,14 +88,15 @@ fun ContactConsultationScreen(
 
     var name by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
-    var subject by remember { mutableStateOf("مشاوره ارتوپدی و مفاصل") }
+    var subject by remember { mutableStateOf("مشاوره جراحی بسته و لیزری دیسک") }
     var message by remember { mutableStateOf("") }
 
     var subjectDropdownExpanded by remember { mutableStateOf(false) }
     val subjectOptions = listOf(
-        "مشاوره ارتوپدی و مفاصل",
-        "مشاوره دیسک و ستون فقرات",
-        "مشاوره آسیب‌های ورزشی",
+        "مشاوره جراحی بسته و لیزری دیسک",
+        "مشاوره اوزون تراپی و تزریق دیسکوژل",
+        "مشاوره رادیوفرکوئنسی (RF) و بلاک عصب",
+        "مشاوره دردهای مفاصل و آرتروز زانو (PRP)",
         "سوال در مورد نوبت‌دهی و هزینه‌ها",
         "سایر موارد"
     )

@@ -81,7 +81,7 @@ fun ArticleDetailScreen(
         topBar = {
             ClinicTopBar(
                 title = "مقاله آموزشی",
-                subtitle = "کلینیک تخصصی دکتر محمدی",
+                subtitle = "کلینیک درد ماهان - دکتر مجید حیدریان",
                 canNavigateBack = true,
                 onNavigateBack = onNavigateBack,
                 actions = {
@@ -89,7 +89,7 @@ fun ArticleDetailScreen(
                         onClick = {
                             val sendIntent = Intent().apply {
                                 action = Intent.ACTION_SEND
-                                putExtra(Intent.EXTRA_TEXT, "${article.title}\n\n${article.summary}\n\nکلینیک تخصصی سلامت")
+                                putExtra(Intent.EXTRA_TEXT, "${article.title}\n\n${article.summary}\n\nکلینیک فوق تخصصی درد ماهان - دکتر مجید حیدریان\nhttps://drheidarian.ir")
                                 type = "text/plain"
                             }
                             context.startActivity(Intent.createChooser(sendIntent, "اشتراک‌گذاری مقاله"))

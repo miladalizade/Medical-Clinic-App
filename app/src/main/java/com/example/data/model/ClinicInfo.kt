@@ -12,29 +12,31 @@ data class Specialty(
 )
 
 data class ClinicInfo(
-    val clinicName: String = "کلینیک تخصصی و فوق تخصصی سلامت",
-    val doctorName: String = "دکتر علی رضایی",
-    val doctorTitle: String = "متخصص و جراح ارتوپدی و آسیب‌های ورزشی",
-    val medicalLicense: String = "نظام پزشکی: ۱۲۳۴۵۶",
-    val biography: String = "دکتر علی رضایی با بیش از ۱۵ سال سابقه طبابت و جراحی‌های پیشرفته در مراکز معتبر درمانی کشور، ارائه دهنده برترین خدمات تشخیصی، درمانی و توانبخشی با بهره‌گیری از به‌روزترین تجهیزات پزشکی است.",
+    val clinicName: String = "کلینیک فوق تخصصی درد ماهان",
+    val doctorName: String = "دکتر مجید حیدریان",
+    val doctorTitle: String = "فوق تخصص درد و ستون فقرات | فلوشیپ اینترونشنال درد",
+    val medicalLicense: String = "نظام پزشکی: ۹۰۰۱۱",
+    val biography: String = "دکتر مجید حیدریان، فوق تخصص درد از دانشگاه علوم پزشکی ایران و مؤسس کلینیک درد ماهان است. ایشان دارای گواهینامه تخصصی جراحی دیسک با لیزر از کشور آلمان و مدرک کاربرد اوزون در درمان دیسک از دانشگاه شهید بهشتی بوده و عضو فعال انجمن بررسی و مطالعه درد آمریکا (APS) می‌باشد. کلینیک درد ماهان با بهره‌گیری از اتاق عمل مجهز مجهز به رادیولوژی فلوروسکوپی، روش‌های درمانی بسته و بدون جراحی باز را به بیماران عزیز ارائه می‌نماید.",
     val specialties: List<Specialty> = listOf(
-        Specialty("جراحی و درمان آرتروز", "تعویض مفصل زانو و لگن با روش‌های کم‌تهاجمی"),
-        Specialty("آسیب‌های ورزشی", "ترمیم رباط صلیبی و منیسک و فیزیوتراپی تخصصی"),
-        Specialty("ستون فقرات و دیسک کمر", "درمان‌های غیرجراحی و لیزری دیسک"),
-        Specialty("طب فیزیکی و توانبخشی", "برنامه‌های اختصاصی ورزش‌درمانی و بازیابی توان حرکتی")
+        Specialty("جراحی بسته و لیزری دیسک", "درمان دیسک کمر و گردن بدون بیهوشی و برش جراحی"),
+        Specialty("اوزون تراپی و تزریق دیسکوژل", "ترمیم و کاهش التهاب دیسک با اوزون و ژل‌های پیشرفته"),
+        Specialty("رادیوفرکوئنسی اعصاب و مفاصل (RF)", "تسکین طولانی‌مدت دردهای ستون فقرات، گردن و آرتروز مفاصل"),
+        Specialty("درمان دردهای زانو، شانه و لگن", "تزریق‌های تخصصی پی‌آر‌پی (PRP)، اسید هیالورونیک و بلاک عصب"),
+        Specialty("کارگذاری پمپ و پورت درد", "کنترل دردهای مزمن و مقاوم به درمان‌های دارویی")
     ),
-    val phoneNumber: String = "021-88776655",
-    val emergencyPhone: String = "09120000000",
-    val address: String = "تهران، خیابان ولیعصر، بالاتر از میدان ونک، کوچه نگار، پلاک ۱۲، طبقه ۳",
-    val mapLatitude: Double = 35.7601,
-    val mapLongitude: Double = 51.4116,
+    val phoneNumber: String = "021-88866619",
+    val secondaryPhoneNumber: String = "021-88866629",
+    val emergencyPhone: String = "09309524654",
+    val address: String = "تهران، خیابان مطهری، خیابان فجر، روبروی بیمارستان جم، کوچه مدائن، پلاک ۲۰، ساختمان پزشکان ماهان، طبقه ۵، واحد ۱۰",
+    val mapLatitude: Double = 35.7262,
+    val mapLongitude: Double = 51.4248,
     val workingHours: List<WorkingHour> = listOf(
-        WorkingHour("شنبه تا چهارشنبه", "۱۵:۰۰ الی ۲۱:۰۰"),
-        WorkingHour("پنج‌شنبه‌ها", "۰۹:۰۰ الی ۱۴:۰۰"),
-        WorkingHour("جمعه‌ها و ایام تعطیل", "فقط موارد اورژانسی با هماهنگی قبلی")
+        WorkingHour("شنبه تا چهارشنبه", "۱۴:۰۰ الی ۲۰:۰۰"),
+        WorkingHour("پنج‌شنبه‌ها", "۰۹:۰۰ الی ۱۳:۰۰"),
+        WorkingHour("جمعه‌ها و ایام تعطیل", "مشاوره تلفنی و هماهنگی اورژانسی")
     ),
-    val instagramUrl: String = "https://instagram.com",
-    val telegramUrl: String = "https://t.me",
-    val whatsappUrl: String = "https://wa.me/989120000000",
-    val websiteUrl: String = "https://example.com"
+    val instagramUrl: String = "https://instagram.com/dr.heidarian",
+    val telegramUrl: String = "https://t.me/drheidarian",
+    val whatsappUrl: String = "https://wa.me/989309524654",
+    val websiteUrl: String = "https://drheidarian.ir"
 )

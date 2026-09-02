@@ -75,7 +75,7 @@ fun VideoPlayerScreen(
         topBar = {
             ClinicTopBar(
                 title = "پخش ویدیو",
-                subtitle = "کلینیک ارتوپدی و سلامت",
+                subtitle = "کلینیک درد ماهان - دکتر مجید حیدریان",
                 canNavigateBack = true,
                 onNavigateBack = onNavigateBack
             )

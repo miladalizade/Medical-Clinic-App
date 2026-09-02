@@ -1,6 +1,6 @@
 {
-  "name": "Medical Clinic",
-  "description": "A modern and complete medical clinic introduction app featuring articles, photo gallery, Aparat video player, doctor introduction, and consultation form.",
+  "name": "دکتر حیدریان",
+  "description": "اپلیکیشن رسمی کلینیک فوق تخصصی درد ماهان و دکتر مجید حیدریان، شامل مقالات آموزشی درمان دیسک و ستون فقرات، گالری تصاویر، ویدیوهای تخصصی آپارات و مشاوره غیرحضوری.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

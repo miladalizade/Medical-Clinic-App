@@ -163,7 +163,7 @@ fun GalleryGridItem(
             ) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
-                        .data(image.imageUrl)
+                        .data(image.getResolvedUrl())
                         .crossfade(true)
                         .build(),
                     contentDescription = image.title,

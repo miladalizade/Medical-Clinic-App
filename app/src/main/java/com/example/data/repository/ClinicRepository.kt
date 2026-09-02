@@ -6,12 +6,13 @@ import com.example.data.model.ClinicVideo
 import com.example.data.model.ConsultationRequest
 import com.example.data.model.GalleryAlbum
 import com.example.data.model.GalleryImage
+import com.example.data.remote.WordPressClient
+import com.example.data.remote.model.WordPressMediaDto
+import com.example.data.remote.model.WordPressPostDto
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Query
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import java.util.UUID
 
 interface ClinicRepository {
     suspend fun getArticles(): Result<List<Article>>
@@ -29,10 +30,23 @@ class ClinicRepositoryImpl(
 ) : ClinicRepository {
 
     override suspend fun getArticles(): Result<List<Article>> = withContext(Dispatchers.IO) {
+        // 1. Try to fetch live posts from drheidarian.ir WordPress REST API
+        try {
+            val wpPosts = WordPressClient.apiService.getPosts(perPage = 20)
+            if (wpPosts.isNotEmpty()) {
+                val mappedArticles = wpPosts.map { post -> mapWordPressPostToArticle(post) }
+                if (mappedArticles.isNotEmpty()) {
+                    return@withContext Result.success(mappedArticles)
+                }
+            }
+        } catch (_: Exception) {
+            // Graceful fallback to offline or Firestore
+        }
+
+        // 2. Try Firestore if available
         try {
             if (firestore != null) {
                 val snapshot = firestore.collection("articles")
-                    .orderBy("date", Query.Direction.DESCENDING)
                     .get()
                     .await()
 
@@ -45,40 +59,52 @@ class ClinicRepositoryImpl(
                     }
                 }
             }
-            // Fallback default sample data
-            Result.success(DefaultData.articles)
-        } catch (e: Exception) {
-            // Return cached/default sample data gracefully instead of failing
-            Result.success(DefaultData.articles)
-        }
+        } catch (_: Exception) { }
+
+        // 3. Fallback to curated Dr. Heidarian clinic data
+        Result.success(DefaultData.articles)
     }
 
     override suspend fun getArticleById(id: String): Result<Article> = withContext(Dispatchers.IO) {
-        try {
-            if (firestore != null) {
-                val doc = firestore.collection("articles").document(id).get().await()
-                val article = doc.toObject(Article::class.java)?.copy(id = doc.id)
-                if (article != null) return@withContext Result.success(article)
-            }
-            val localArticle = DefaultData.articles.find { it.id == id }
-                ?: DefaultData.articles.firstOrNull()
-            if (localArticle != null) {
-                Result.success(localArticle)
-            } else {
-                Result.failure(NoSuchElementException("مقاله یافت نشد"))
-            }
-        } catch (e: Exception) {
-            val localArticle = DefaultData.articles.find { it.id == id }
-                ?: DefaultData.articles.firstOrNull()
-            if (localArticle != null) {
-                Result.success(localArticle)
-            } else {
-                Result.failure(e)
-            }
+        val articlesResult = getArticles()
+        if (articlesResult.isSuccess) {
+            val found = articlesResult.getOrNull()?.find { it.id == id }
+            if (found != null) return@withContext Result.success(found)
+        }
+
+        val localArticle = DefaultData.articles.find { it.id == id }
+            ?: DefaultData.articles.firstOrNull()
+        if (localArticle != null) {
+            Result.success(localArticle)
+        } else {
+            Result.failure(NoSuchElementException("مقاله یافت نشد"))
         }
     }
 
     override suspend fun getGalleryAlbums(): Result<List<GalleryAlbum>> = withContext(Dispatchers.IO) {
+        // 1. Try to fetch live media (Media ID & URL) from drheidarian.ir WordPress REST API
+        try {
+            val wpMedia = WordPressClient.apiService.getMedia(perPage = 40)
+            val validMediaImages = wpMedia
+                .filter { it.sourceUrl?.isNotBlank() == true }
+                .map { media -> mapWordPressMediaToGalleryImage(media) }
+
+            if (validMediaImages.isNotEmpty()) {
+                val wpAlbum = GalleryAlbum(
+                    id = "wp_live_media",
+                    title = "گالری تصاویر اختصاصی دکتر حیدریان",
+                    description = "تصاویر و مستندات بالینی بارگذاری‌شده در وب‌سایت رسمی drheidarian.ir",
+                    coverImageUrl = validMediaImages.first().imageUrl,
+                    images = validMediaImages
+                )
+                val combinedAlbums = listOf(wpAlbum) + DefaultData.galleryAlbums
+                return@withContext Result.success(combinedAlbums)
+            }
+        } catch (_: Exception) {
+            // Graceful fallback
+        }
+
+        // 2. Try Firestore if available
         try {
             if (firestore != null) {
                 val snapshot = firestore.collection("gallery_albums").get().await()
@@ -91,34 +117,24 @@ class ClinicRepositoryImpl(
                     }
                 }
             }
-            Result.success(DefaultData.galleryAlbums)
-        } catch (e: Exception) {
-            Result.success(DefaultData.galleryAlbums)
-        }
+        } catch (_: Exception) { }
+
+        Result.success(DefaultData.galleryAlbums)
     }
 
     override suspend fun getGalleryAlbumById(id: String): Result<GalleryAlbum> = withContext(Dispatchers.IO) {
-        try {
-            if (firestore != null) {
-                val doc = firestore.collection("gallery_albums").document(id).get().await()
-                val album = doc.toObject(GalleryAlbum::class.java)?.copy(id = doc.id)
-                if (album != null) return@withContext Result.success(album)
-            }
-            val localAlbum = DefaultData.galleryAlbums.find { it.id == id }
-                ?: DefaultData.galleryAlbums.firstOrNull()
-            if (localAlbum != null) {
-                Result.success(localAlbum)
-            } else {
-                Result.failure(NoSuchElementException("آلبوم یافت نشد"))
-            }
-        } catch (e: Exception) {
-            val localAlbum = DefaultData.galleryAlbums.find { it.id == id }
-                ?: DefaultData.galleryAlbums.firstOrNull()
-            if (localAlbum != null) {
-                Result.success(localAlbum)
-            } else {
-                Result.failure(e)
-            }
+        val albumsResult = getGalleryAlbums()
+        if (albumsResult.isSuccess) {
+            val found = albumsResult.getOrNull()?.find { it.id == id }
+            if (found != null) return@withContext Result.success(found)
+        }
+
+        val localAlbum = DefaultData.galleryAlbums.find { it.id == id }
+            ?: DefaultData.galleryAlbums.firstOrNull()
+        if (localAlbum != null) {
+            Result.success(localAlbum)
+        } else {
+            Result.failure(NoSuchElementException("آلبوم یافت نشد"))
         }
     }
 
@@ -135,34 +151,16 @@ class ClinicRepositoryImpl(
                     }
                 }
             }
-            Result.success(DefaultData.videos)
-        } catch (e: Exception) {
-            Result.success(DefaultData.videos)
-        }
+        } catch (_: Exception) { }
+        Result.success(DefaultData.videos)
     }
 
     override suspend fun getVideoById(id: String): Result<ClinicVideo> = withContext(Dispatchers.IO) {
-        try {
-            if (firestore != null) {
-                val doc = firestore.collection("clinic_videos").document(id).get().await()
-                val video = doc.toObject(ClinicVideo::class.java)?.copy(id = doc.id)
-                if (video != null) return@withContext Result.success(video)
-            }
-            val localVideo = DefaultData.videos.find { it.id == id }
-                ?: DefaultData.videos.firstOrNull()
-            if (localVideo != null) {
-                Result.success(localVideo)
-            } else {
-                Result.failure(NoSuchElementException("ویدیو یافت نشد"))
-            }
-        } catch (e: Exception) {
-            val localVideo = DefaultData.videos.find { it.id == id }
-                ?: DefaultData.videos.firstOrNull()
-            if (localVideo != null) {
-                Result.success(localVideo)
-            } else {
-                Result.failure(e)
-            }
+        val localVideo = DefaultData.videos.find { it.id == id } ?: DefaultData.videos.firstOrNull()
+        if (localVideo != null) {
+            Result.success(localVideo)
+        } else {
+            Result.failure(NoSuchElementException("ویدیو یافت نشد"))
         }
     }
 
@@ -172,7 +170,7 @@ class ClinicRepositoryImpl(
 
     override suspend fun sendConsultationRequest(request: ConsultationRequest): Result<String> = withContext(Dispatchers.IO) {
         try {
-            val requestId = if (request.id.isBlank()) "REQ-${System.currentTimeMillis().toString().takeLast(6)}" else request.id
+            val requestId = if (request.id.isBlank()) "DRH-${System.currentTimeMillis().toString().takeLast(6)}" else request.id
             val finalRequest = request.copy(id = requestId, timestamp = System.currentTimeMillis())
 
             if (firestore != null) {
@@ -182,11 +180,88 @@ class ClinicRepositoryImpl(
                     .await()
             }
             Result.success(requestId)
-        } catch (e: Exception) {
-            // Even if offline, return success code with local receipt
-            val localId = "REQ-${System.currentTimeMillis().toString().takeLast(6)}"
+        } catch (_: Exception) {
+            val localId = "DRH-${System.currentTimeMillis().toString().takeLast(6)}"
             Result.success(localId)
         }
+    }
+
+    private fun mapWordPressPostToArticle(post: WordPressPostDto): Article {
+        val rawTitle = post.title?.rendered.orEmpty()
+        val rawContent = post.content?.rendered.orEmpty()
+        val rawExcerpt = post.excerpt?.rendered.orEmpty()
+
+        val cleanTitle = cleanHtml(rawTitle).ifBlank { "مقاله تخصصی درد و ستون فقرات" }
+        val cleanContent = cleanHtml(rawContent)
+        val cleanSummary = cleanHtml(rawExcerpt).ifBlank {
+            cleanContent.take(180).plus("...")
+        }
+
+        val imageUrl = post.embedded?.featuredMedia?.firstOrNull()?.sourceUrl
+            ?: DefaultData.articles.first().imageUrl
+
+        val category = post.embedded?.terms?.flatten()?.firstOrNull { it.taxonomy == "category" }?.name
+            ?: "جراحی بسته و درمان درد"
+
+        val formattedDate = post.date?.take(10)?.replace("-", "/") ?: "به‌روزرسانی جدید"
+
+        return Article(
+            id = "wp_${post.id}",
+            title = cleanTitle,
+            summary = cleanSummary,
+            content = cleanContent.ifBlank { cleanSummary },
+            imageUrl = imageUrl,
+            category = category,
+            readTimeMinutes = (cleanContent.length / 450).coerceIn(3, 10),
+            date = formattedDate,
+            author = "دکتر مجید حیدریان",
+            tags = listOf("دکتر حیدریان", "کلینیک درد ماهان", "ستون فقرات")
+        )
+    }
+
+    private fun mapWordPressMediaToGalleryImage(media: WordPressMediaDto): GalleryImage {
+        val title = cleanHtml(media.title?.rendered).ifBlank {
+            cleanHtml(media.altText).ifBlank { "تصویر بالینی و درمانی" }
+        }
+        val caption = cleanHtml(media.caption?.rendered).ifBlank {
+            cleanHtml(media.altText)
+        }
+        val url = media.sourceUrl.orEmpty()
+        val mediaId = media.id.toString()
+
+        return GalleryImage(
+            id = "wp_media_$mediaId",
+            mediaId = mediaId,
+            title = title,
+            imageUrl = url,
+            url = url,
+            caption = caption
+        )
+    }
+
+    private fun cleanHtml(html: String?): String {
+        if (html.isNullOrBlank()) return ""
+        return html
+            .replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("</p>", RegexOption.IGNORE_CASE), "\n\n")
+            .replace(Regex("</li>", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("<li>", RegexOption.IGNORE_CASE), "• ")
+            .replace(Regex("<h[1-6]>", RegexOption.IGNORE_CASE), "\n\n")
+            .replace(Regex("</h[1-6]>", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("<[^>]*>"), "")
+            .replace("&nbsp;", " ")
+            .replace("&zwnj;", "\u200C")
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
+            .replace("&#8211;", "–")
+            .replace("&#8212;", "—")
+            .replace("&#8216;", "‘")
+            .replace("&#8217;", "’")
+            .replace("&#8220;", "“")
+            .replace("&#8221;", "”")
+            .replace("&hellip;", "…")
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
     }
 }
 
@@ -197,188 +272,173 @@ object DefaultData {
     val articles = listOf(
         Article(
             id = "art_1",
-            title = "راهنمای جامع مراقبت و پیشگیری از آرتروز زانو",
-            summary = "آشنایی با علت‌ها، علائم اولیه، روش‌های نوین درمانی و تمرینات ورزشی روزمره برای حفظ سلامت مفصل زانو.",
+            title = "جراحی بسته و لیزری دیسک کمر و گردن؛ مزایا و روند درمان",
+            summary = "آشنایی با شیوه درمان کم‌تهاجمی دیسک با لیزر بدون نیاز به بیهوشی عمومی و بدون برش جراحی در کلینیک درد ماهان.",
             content = """
-                آرتروز زانو یکی از شایع‌ترین مشکلات اسکلتی-عضلانی در سراسر جهان است که با تحلیل تدریجی غضروف مفصلی همراه می‌شود.
+                جراحی بسته دیسک با لیزر (PLDD) یکی از پیشرفته‌ترین و مطمئن‌ترین روش‌های درمان بیرون‌زدگی دیسک ستون فقرات است. در این روش با هدایت اشعه ایکس زنده (فلوروسکوپی) و بی‌حسی موضعی، یک سوزن بسیار نازک وارد فضای دیسک شده و انرژی لیزر با تبخیر بخش کوچکی از هسته دیسک، فشار را از روی ریشه عصب سیاتیک یا نخاع برمی‌دارد.
 
-                علائم شایع:
-                • درد در ناحیه زانو به ویژه هنگام بالا رفتن از پله‌ها یا نشستن طولانی
-                • احساس خشکی و سفتی صبحگاهی مفصل
-                • تورم و حساسیت به لمس در اطراف کاسه زانو
-                • صدای تق‌تق (کریپتوس) هنگام خم و راست کردن پا
+                مزایای جراحی لیزری دیسک:
+                • بدون نیاز به بیهوشی عمومی و بستری طولانی (عمل سرپایی)
+                • بدون ایجاد برش پوستی و بدون خونریزی
+                • عدم دستکاری به استخوان مهره یا لیگامان‌ها و حفظ ساختار طبیعی ستون فقرات
+                • بازگشت بسیار سریع بیمار به فعالیت‌های شغلی و روزمره (معمولاً ظرف ۳ تا ۵ روز)
 
-                روش‌های پیشگیری و مدیریت:
-                ۱. کنترل وزن: هر یک کیلوگرم کاهش وزن، فشار وارده بر مفصل زانو را تا ۴ کیلوگرم کاهش می‌دهد.
-                ۲. تقویت عضلات چهارسر ران: تمرینات کششی و قدرتی سبک به پایداری مفصل کمک شایانی می‌کنند.
-                ۳. استفاده از کفش طبی مناسب با کفی جاذب ضربه.
-                ۴. پرهیز از دوزانو و چهارزانو نشستن طولانی‌مدت.
-
-                چه زمانی به پزشک مراجعه کنیم؟
-                در صورت وجود درد مداوم بیش از دو هفته، قفل شدن مفصل، یا ناتوانی در تحمل وزن، مراجعه فوری به متخصص ارتوپدی ضروری است.
+                کاندیداهای مناسب:
+                بیمارانی که دچار درد تیرکشنده به پاها (سیاتیک) یا دست‌ها هستند و درمان‌های اولیه دارویی یا فیزیوتراپی به بهبود آن‌ها کمکی نکرده است، پس از بررسی دقیق MRI و معاینه تخصصی توسط فوق تخصص درد، می‌توانند از این روش بهره‌مند شوند.
             """.trimIndent(),
-            imageUrl = "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=1200&q=80",
-            category = "ارتوپدی و مفاصل",
-            readTimeMinutes = 4,
-            date = "۱۴۰۴/۱۱/۲۰",
-            author = "دکتر علی رضایی",
-            tags = listOf("زانو", "آرتروز", "مفاصل", "ورزش درمانی")
+            imageUrl = "https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=1200&q=80",
+            category = "جراحی بسته دیسک",
+            readTimeMinutes = 5,
+            date = "۱۴۰۴/۱۱/۲۵",
+            author = "دکتر مجید حیدریان",
+            tags = listOf("لیزر دیسک", "دیسک کمر", "سیاتیک", "کلینیک درد")
         ),
         Article(
             id = "art_2",
-            title = "۱۰ نکته طلایی برای درمان و پیشگیری از دیسک کمر",
-            summary = "اصول صحیح ارگونومی کار پشت میز، نحوه خوابیدن و تمرینات تقویتی عضلات فیله و شکم.",
+            title = "اوزون تراپی و تزریق دیسکوژل؛ گزینه‌های نوین درمان ستون فقرات",
+            summary = "بررسی نحوه عملکرد گاز اوزون طبی و ژل رادیواپک دیسکوژل در ترمیم نوکلئوس دیسک و کاهش سریع التهاب عصب.",
             content = """
-                ستون فقرات ستون اصلی سلامت و تحرک بدن است. فشارهای نادرست روزمره می‌تواند منجر به بیرون‌زدگی دیسک کمری شود.
+                اوزون‌تراپی و دیسکوژل از روش‌های انقلابی طب درد هستند که می‌توانند بدون جراحی باز، بافت دیسک تخریب‌شده را تثبیت و التهاب موضعی را مهار کنند.
 
-                عوامل تشدیدکننده:
-                • بلند کردن اجسام سنگین به روش غیراصولی (خم شدن از کمر بدون خم کردن زانو)
-                • نشستن‌های ممتد و قوز کردن پشت میز کار
-                • ضعف عضلات مرکزی بدن (Core muscles)
+                تزریق گاز اوزون (Ozone Therapy):
+                گاز اوزون با غلظت پزشکی مشخص خواص ضدالتهابی و تسکین‌دهنده بسیار قوی دارد. اوزون با اکسیداسیون پروتئوگلیکان‌های دیسک سبب جمع شدن فتق دیسک و بهبود اکسیژن‌رسانی و ترمیم ریشه‌های عصبی می‌شود.
 
-                توصیه‌های کاربردی:
-                ۱. قاعده ۲۰-۲۰: بعد از هر ۴۵ دقیقه نشستن، ۲ دقیقه بایستید و چند قدم راه بروید.
-                ۲. تنظیم ارتفاع مانیتور و استفاده از پشتی ارگونومیک طبی.
-                ۳. پیاده‌روی منظم روزانه به مدت ۳۰ دقیقه در سطح صاف.
-                ۴. خوابیدن به پهلو با قرار دادن یک بالش نرم بین زانوها.
-
-                درمان‌های نوین:
-                امروزه بیش از ۹۰ درصد موارد دیسک کمر بدون نیاز به جراحی باز و با روش‌های دارویی، فیزیوتراپی و ورزش‌درمانی بهبود می‌یابند.
+                دیسکوژل (DiscoGel):
+                دیسکوژل یک مایع ژله‌ای بر پایه الکل خالص و سلولز است که تحت هدایت فلوروسکوپ داخل مرکز دیسک تزریق می‌شود. این ماده پس از چند دقیقه به ساختاری الاستیک و اسفنجی تبدیل شده و سبب انسداد شکاف‌های فیبری دیسک و عقب‌نشینی برآمدگی دیسک می‌گردد.
             """.trimIndent(),
             imageUrl = "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&w=1200&q=80",
-            category = "ستون فقرات",
-            readTimeMinutes = 6,
-            date = "۱۴۰۴/۱۱/۱۵",
-            author = "دکتر علی رضایی",
-            tags = listOf("کمردرد", "دیسک کمر", "ارگونومی", "ستون فقرات")
+            category = "درمان‌های نوین درد",
+            readTimeMinutes = 4,
+            date = "۱۴۰۴/۱۱/۱۸",
+            author = "دکتر مجید حیدریان",
+            tags = listOf("اوزون تراپی", "دیسکوژل", "درمان بدون جراحی", "ستون فقرات")
         ),
         Article(
             id = "art_3",
-            title = "آسیب‌های شایع ورزشی و نحوه برخورد اولیه (پروتکل R.I.C.E)",
-            summary = "پیچ‌خوردگی مچ پا و کشیدگی تاندون‌ها؛ چگونه در لحظات اولیه بهترین اقدام درمانی را انجام دهیم؟",
+            title = "رادیوفرکوئنسی (RF) عصب؛ پایان دردهای مفصلی و سردردهای مقاوم",
+            summary = "چگونه با فرکانس‌های رادیویی امواج درد ناشی از آرتروز ستون فقرات، مفاصل فاست و دردهای مزمن را متوقف کنیم؟",
             content = """
-                در فعالیت‌های ورزشی، پیچ‌خوردگی‌ها و کشیدگی‌های رباط و تاندون بسیار شایع هستند. اقدام سریع و اصولی می‌تواند روند بهبود را به شدت سرعت بخشد.
+                روش رادیوفرکوئنسی (RF Neurotomy / Pulsed RF) از امواج با فرکانس بالا برای قطع انتقال پیام‌های درد از مفاصل آسیب‌دیده به مغز استفاده می‌کند.
 
-                پروتکل چهارمرحله‌ای R.I.C.E:
-                • Rest (استراحت): از ادامه فعالیت و فشار آوردن به عضو آسیب‌دیده خودداری کنید.
-                • Ice (یخ): قرار دادن کیسه یخ (پیچیده در پارچه) به مدت ۱۵ الی ۲۰ دقیقه هر ۳ ساعت یک‌بار.
-                • Compression (فشار ملایم): بستن عضو با باند کشی جهت کاهش و کنترل تورم.
-                • Elevation (بالا نگه داشتن): قرار دادن عضو بالاتر از سطح قلب برای تسهیل گردش خون.
+                کاربردهای اصلی رادیوفرکوئنسی:
+                • دردهای ناشی از آرتروز مفاصل فاست گردن و کمر
+                • دردهای مفصل خاجی-خاصره‌ای (ساکروایلیاک)
+                • عصب سه‌قلو (نورالژی تری ژمینال) و سردردهای با منشأ گردنی
+                • درد مزمن زانو ناشی از آرتروز شدید با فرسایش اعصاب ژنیکولار (Genicular Nerves)
 
-                نکته مهم: هرگز یخ را مستقیماً روی پوست قرار ندهید و از ماساژ دادن موضع گرم در ۴۸ ساعت اول خودداری کنید.
+                این روش با بی‌حسی موضعی انجام شده و اثرات تسکینی آن معمولاً بین ۶ ماه تا ۲ سال یا بیشتر پایدار باقی می‌ماند.
             """.trimIndent(),
-            imageUrl = "https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=1200&q=80",
-            category = "طب ورزشی",
-            readTimeMinutes = 5,
-            date = "۱۴۰۴/۱۱/۱۰",
-            author = "دکتر علی رضایی",
-            tags = listOf("ورزش", "کمک‌های اولیه", "تاندون", "مچ پا")
+            imageUrl = "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=1200&q=80",
+            category = "رادیوفرکوئنسی و اینترونشن",
+            readTimeMinutes = 6,
+            date = "۱۴۰۴/۱۱/۱۲",
+            author = "دکتر مجید حیدریان",
+            tags = listOf("رادیوفرکوئنسی", "آرتروز", "بلاک عصب", "کنترل درد")
         ),
         Article(
             id = "art_4",
-            title = "پوکی استخوان؛ بیماری خاموش و راه‌های تشخیص زودهنگام",
-            summary = "تغذیه سرشار از کلسیم و ویتامین D، آزمایش سنجش تراکم استخوان (DEXA) و سنین غربالگری.",
+            title = "روش‌های نوین درمان آرتروز زانو با تزریق پی‌آر‌پی (PRP) و اسید هیالورونیک",
+            summary = "ترمیم و بازسازی بافت غضروفی با پلاسمای غنی از پلاکت و ژل‌های غضروف‌ساز تحت هدایت سونوگرافی دقیق.",
             content = """
-                پوکی استخوان یا استئوپروز به تدریج تراکم استخوان را کاهش داده و ریسک شکستگی را به ویژه در مچ دست، لگن و ستون فقرات افزایش می‌دهد.
+                آرتروز زانو با از بین رفتن تدریجی غضروف و درد هنگام راه رفتن همراه است. در کلینیک درد ماهان، با رویکردهای نوین بازساختی (Regenerative Medicine) می‌توان از پیشرفت تخریب مفصل جلوگیری کرد.
 
-                منابع تغذیه‌ای مهم:
-                • لبنیات پاستوریزه کم‌چرب، بادام و کلم بروکلی
-                • دریافت کافی نور خورشید یا مکمل ویتامین D3 طبق دستور پزشک
-                • ورزش‌های تحمل وزن مانند پیاده‌روی سریع و رقص هوازی
+                پی‌آر‌پی (PRP):
+                در این تکنیک، مقداری از خون خود بیمار گرفته شده و با سانتریفیوژ تخصصی، پلاکت‌ها با غلظت ۵ تا ۸ برابر جداسازی می‌شوند. فاکتورهای رشد موجود در پلاکت‌ها فاکتورهای ترمیمی قوی آزاد کرده و به کاهش چشمگیر درد و تورم زانو کمک می‌نمایند.
 
-                تست سنجش تراکم استخوان برای تمامی بانوان بالای ۵۰ سال و آقایان با عوامل خطر توصیه می‌شود.
+                تزریق هیالورونات (ژل غضروف‌ساز):
+                تزریق هیالورونیک اسید با روان‌سازی حرکت مفصل و جذب ضربات، اصطکاک را کاهش داده و کیفیت زندگی بیمار را بهبود می‌بخشد.
             """.trimIndent(),
-            imageUrl = "https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=1200&q=80",
-            category = "سلامت استخوان",
-            readTimeMinutes = 4,
-            date = "۱۴۰۴/۱۱/۰۱",
-            author = "تیم پزشکی کلینیک",
-            tags = listOf("پوکی استخوان", "کلسیم", "ویتامین دی", "پیشگیری")
+            imageUrl = "https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=1200&q=80",
+            category = "درمان مفاصل و زانو",
+            readTimeMinutes = 5,
+            date = "۱۴۰۴/۱۱/۰۵",
+            author = "دکتر مجید حیدریان",
+            tags = listOf("PRP", "آرتروز زانو", "پی آر پی", "تزریق مفصل")
         )
     )
 
     val galleryAlbums = listOf(
         GalleryAlbum(
             id = "alb_1",
-            title = "ورزش‌های بهبود کمردرد و تقویت عضلات ستون فقرات",
-            description = "مجموعه حرکات اصلاحی و کششی توصیه شده توسط متخصص ارتوپدی برای رفع گرفتگی عضلانی و کاهش فشار روی دیسک.",
-            coverImageUrl = "https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=800&q=80",
+            title = "جراحی‌های بسته و لیزری دیسک ستون فقرات",
+            description = "تصاویر و مستندات مراحل انجام جراحی کم‌تهاجمی لیزر دیسک و دیسکوژل در اتاق عمل کلینیک درد ماهان.",
+            coverImageUrl = "https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=800&q=80",
             images = listOf(
                 GalleryImage(
-                    id = "img_1_1",
-                    title = "حرکت پل (Bridge Exercise)",
-                    imageUrl = "https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=1200&q=80",
-                    caption = "به پشت بخوابید، زانوها را خم کنید و با انقباض باسن، لگن را بالا بیاورید. ۵ ثانیه مکث کنید و به آرامی برگردید."
+                    id = "media_101",
+                    title = "انجام لیزر دیسک تحت فلوروسکوپی",
+                    imageUrl = "https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=1200&q=80",
+                    caption = "دسترسی دقیق به فضای دیسک با سوزن مخصوص و تابش هدایت‌شده فیبر نوری لیزر."
                 ),
                 GalleryImage(
-                    id = "img_1_2",
-                    title = "کشش گربه و گاو (Cat-Cow Stretch)",
-                    imageUrl = "https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=1200&q=80",
-                    caption = "در حالت چهار دست و پا، با دم کمر را گود کرده و سر را بالا ببرید و با بازدم پشت را گرد کنید."
+                    id = "media_102",
+                    title = "تزریق دیسکوژل در دیسک گردنی",
+                    imageUrl = "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&w=1200&q=80",
+                    caption = "ترمیم فتق دیسک گردن بدون برش با کنترل دیجیتالی تصویربرداری زنده."
                 ),
                 GalleryImage(
-                    id = "img_1_3",
-                    title = "کشش زانو به سمت سینه (Knee to Chest)",
-                    imageUrl = "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&w=1200&q=80",
-                    caption = "یک پا را با دست به سمت سینه بکشید تا کشش ملایمی در ناحیه کمر و باسن احساس کنید. ۲۰ ثانیه نگه دارید."
+                    id = "media_103",
+                    title = "بلاک ریشه عصب ترانس فورامینال",
+                    imageUrl = "https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=1200&q=80",
+                    caption = "تزریق ضدالتهاب به محل درگیری عصب سیاتیک جهت تسکین فوری درد حاد."
                 ),
                 GalleryImage(
-                    id = "img_1_4",
-                    title = "حرکت پرنده سگ (Bird-Dog)",
-                    imageUrl = "https://images.unsplash.com/photo-1575052814086-f385e2e2ad1b?auto=format&fit=crop&w=1200&q=80",
-                    caption = "دست راست و پای چپ را به صورت همزمان بالا آورده و در امتداد بدن صاف نگه دارید تا تعادل و عضلات عمقی تقویت شوند."
+                    id = "media_104",
+                    title = "رادیوفرکوئنسی مفاصل فاست ستون فقرات",
+                    imageUrl = "https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&w=1200&q=80",
+                    caption = "قطع امواج درد ناشی از آرتروز مهره‌ها با الکترودهای سوزنی RF."
                 )
             )
         ),
         GalleryAlbum(
             id = "alb_2",
-            title = "محیط و تجهیزات پیشرفته کلینیک",
-            description = "تصاویری از فضاهای درمانی، اتاق‌های ویزیت مجهز، بخش فیزیوتراپی و دستگاه‌های نوین تشخیصی کلینیک.",
+            title = "محیط و امکانات کلینیک فوق تخصصی درد ماهان",
+            description = "فضای پذیرش، اتاق عمل اختصاصی مجهز به C-Arm، کلینیک طب فیزیکی و سالن‌های درمان.",
             coverImageUrl = "https://images.unsplash.com/photo-1586773860418-d37222d8fce3?auto=format&fit=crop&w=800&q=80",
             images = listOf(
                 GalleryImage(
-                    id = "img_2_1",
-                    title = "سالن انتظار و پذیرش",
+                    id = "media_201",
+                    title = "اتاق عمل اینترونشنال درد با دستگاه C-Arm",
+                    imageUrl = "https://images.unsplash.com/photo-1586773860418-d37222d8fce3?auto=format&fit=crop&w=1200&q=80",
+                    caption = "تجهیزات رادیولوژی فلوروسکوپی پیشرفته برای هدایت میلی‌متری سوزن‌های درمانی."
+                ),
+                GalleryImage(
+                    id = "media_202",
+                    title = "فضای پذیرش و مشاوره تخصصی",
                     imageUrl = "https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&w=1200&q=80",
-                    caption = "فضای آرام، مدرن و بهداشتی سالن انتظار مجهز به سیستم نوبت‌دهی هوشمند."
+                    caption = "فضای آرام، مدرن و احترام‌برانگیز برای بیماران و همراهان گرامی."
                 ),
                 GalleryImage(
-                    id = "img_2_2",
-                    title = "اتاق معاینه و مشاوره تخصصی",
+                    id = "media_203",
+                    title = "دستگاه ژنراتور رادیوفرکوئنسی (RF)",
                     imageUrl = "https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=1200&q=80",
-                    caption = "محیط کاملاً استریل با تجهیزات کامل برای معاینه بالینی دقیق بیماران."
+                    caption = "دستگاه‌های پیشرفته ساخت آلمان برای نورولیز حرارتی و پالس عصب."
                 ),
                 GalleryImage(
-                    id = "img_2_3",
-                    title = "بخش لیزردرمانی و فیزیوتراپی",
-                    imageUrl = "https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=1200&q=80",
-                    caption = "دستگاه‌های لیزر پرتوان و مگنت‌تراپی جهت تسریع التیام بافت‌های آسیب‌دیده."
-                ),
-                GalleryImage(
-                    id = "img_2_4",
-                    title = "بخش گچ‌گیری و آتل‌بندی مدرن",
-                    imageUrl = "https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=1200&q=80",
-                    caption = "استفاده از فایبرگلاس سبک، ضدآب و با تهویه مناسب برای تثبیت شکستگی‌ها."
+                    id = "media_204",
+                    title = "اتاق ریکاوری بیماران پس از اقدام",
+                    imageUrl = "https://images.unsplash.com/photo-1512678080530-7760d81faba6?auto=format&fit=crop&w=1200&q=80",
+                    caption = "مراقبت پرستاری اختصاصی پس از عمل‌های سرپایی تا زمان ترخیص."
                 )
             )
         ),
         GalleryAlbum(
             id = "alb_3",
-            title = "تمرینات توانبخشی بعد از جراحی تعویض مفصل",
-            description = "راهنمای تصویری مراحل قدم زدن با واکر، بالا رفتن از پله و نشست و برخاست صحیح.",
-            coverImageUrl = "https://images.unsplash.com/photo-1576091160550-2173dba999ef?auto=format&fit=crop&w=800&q=80",
+            title = "حرکات اصلاحی و فیزیوتراپی تخصصی درد",
+            description = "برنامه‌های ورزشی و تمرینات تقویتی ستون فقرات و زانو پس از مداخلات درمانی.",
+            coverImageUrl = "https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=800&q=80",
             images = listOf(
                 GalleryImage(
-                    id = "img_3_1",
-                    title = "تمرین پمپ مچ پا (Ankle Pumps)",
-                    imageUrl = "https://images.unsplash.com/photo-1576091160550-2173dba999ef?auto=format&fit=crop&w=1200&q=80",
-                    caption = "حرکت دادن مچ پا به سمت بالا و پایین جهت جلوگیری از لخته شدن خون و بهبود گردش وریدی."
+                    id = "media_301",
+                    title = "تقویت عضلات ثبات‌دهنده مهره‌ها (Core)",
+                    imageUrl = "https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=1200&q=80",
+                    caption = "تمرینات متوازن برای پیشگیری از عود مجدد دیسک و کاهش فشار مهره‌ای."
                 ),
                 GalleryImage(
-                    id = "img_3_2",
-                    title = "لغزش پاشنه پا روی تخت (Heel Slides)",
-                    imageUrl = "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?auto=format&fit=crop&w=1200&q=80",
-                    caption = "به آرامی پاشنه پا را روی تخت به سمت باسن بلغزانید تا دامنه حرکتی زانو بازیابی شود."
+                    id = "media_302",
+                    title = "کشش ملایم زنجیره خلفی و سیاتیک",
+                    imageUrl = "https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=1200&q=80",
+                    caption = "آزادسازی فاسیای عضلانی و کاهش گرفتگی عضلات پیریفورمیس و باسن."
                 )
             )
         )
@@ -387,39 +447,39 @@ object DefaultData {
     val videos = listOf(
         ClinicVideo(
             id = "vid_1",
-            title = "نحوه انجام جراحی تعویض مفصل زانو (آرتروپلاستی)",
-            description = "توضیحات جامع دکتر در خصوص مراحل تعویض مفصل، جنس پروتزها و مراقبت‌های پس از عمل.",
+            title = "روش جراحی بسته دیسک کمر با لیزر (توضیحات دکتر مجید حیدریان)",
+            description = "دکتر مجید حیدریان نحوه انجام لیزر دیسک و تفاوت آن با جراحی باز را به صورت کامل تشریح می‌کنند.",
             thumbnailUrl = "https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=800&q=80",
             aparatEmbedCode = "https://www.aparat.com/video/video/embed/videohash/r020b70/vt/frame",
-            category = "جراحی زانو",
+            category = "جراحی بسته دیسک",
             duration = "۰۸:۴۵"
         ),
         ClinicVideo(
             id = "vid_2",
-            title = "۵ تمرین معجزه‌آسا برای رفع گردن‌درد و قوز شانه",
-            description = "آموزش گام‌به‌گام تمرینات کششی و تقویتی گردن مناسب کارمندان و کاربران رایانه.",
+            title = "علل دردهای لگن و درمان‌های کم‌تهاجمی مفاصل ساکروایلیاک",
+            description = "تشخیص افتراقی درد لگن از دیسک کمر و روش‌های بلاک و رادیوفرکوئنسی اعصاب مفصل ساکروایلیاک.",
             thumbnailUrl = "https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=800&q=80",
             aparatEmbedCode = "https://www.aparat.com/video/video/embed/videohash/a658428/vt/frame",
-            category = "ورزش درمانی",
-            duration = "۰۵:۲۰"
+            category = "درمان درد لگن",
+            duration = "۰۶:۳۰"
         ),
         ClinicVideo(
             id = "vid_3",
-            title = "پارگی رباط صلیبی قدامی (ACL) و علائم آن",
-            description = "بررسی علائم پارگی رباط در ورزشکاران، تست‌های تشخیصی بالینی و روش‌های جراحی آرتروسکوپی.",
+            title = "درمان‌های نوین آرتروز زانو بدون جراحی تعویض مفصل",
+            description = "کاربردهای پی‌آر‌پی (PRP)، ژل و رادیوفرکوئنسی اعصاب حسی زانو در بیماران مبتلا به ساییدگی مفصل.",
             thumbnailUrl = "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=800&q=80",
             aparatEmbedCode = "https://www.aparat.com/video/video/embed/videohash/k133379/vt/frame",
-            category = "آسیب ورزشی",
-            duration = "۱۱:۱۵"
+            category = "آرتروز زانو",
+            duration = "۱۰:۱۵"
         ),
         ClinicVideo(
             id = "vid_4",
-            title = "تزریق پی‌آر‌پی (PRP) و ژل در زانو؛ مزایا و معایب",
-            description = "پلاسمای غنی از پلاکت چگونه به کاهش التهاب و ترمیم بافت غضروفی کمک می‌کند؟",
+            title = "درد گردن و شانه؛ چه زمانی نیاز به مداخله اینترونشنال دارد؟",
+            description = "بررسی علائم فشار دیسک گردنی روی اعصاب دست و درمان با تزریق اپیدورال و دیسکوژل.",
             thumbnailUrl = "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&w=800&q=80",
             aparatEmbedCode = "https://www.aparat.com/video/video/embed/videohash/n129202/vt/frame",
-            category = "درمان‌های نوین",
-            duration = "۰۶:۵۰"
+            category = "دیسک گردن",
+            duration = "۰۷:۲۰"
         )
     )
 }
