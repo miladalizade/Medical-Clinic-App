@@ -182,7 +182,7 @@ fun ZoomableImageItem(
     ) {
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
-                .data(image.getResolvedUrl())
+                .data(image.resolvedUrl)
                 .crossfade(true)
                 .build(),
             contentDescription = image.title,

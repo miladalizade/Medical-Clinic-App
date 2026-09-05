@@ -17,7 +17,7 @@ data class MediaDetailsDto(
 
 @JsonClass(generateAdapter = true)
 data class WordPressMediaDto(
-    @Json(name = "id") val id: Long = 0,
+    @Json(name = "id") val id: Long? = null,
     @Json(name = "source_url") val sourceUrl: String? = null,
     @Json(name = "title") val title: RenderedTextDto? = null,
     @Json(name = "caption") val caption: RenderedTextDto? = null,
@@ -29,14 +29,14 @@ data class WordPressMediaDto(
 
 @JsonClass(generateAdapter = true)
 data class EmbeddedFeaturedMediaDto(
-    @Json(name = "id") val id: Long = 0,
+    @Json(name = "id") val id: Long? = null,
     @Json(name = "source_url") val sourceUrl: String? = null,
     @Json(name = "alt_text") val altText: String? = null
 )
 
 @JsonClass(generateAdapter = true)
 data class EmbeddedTermDto(
-    @Json(name = "id") val id: Long = 0,
+    @Json(name = "id") val id: Long? = null,
     @Json(name = "name") val name: String? = null,
     @Json(name = "taxonomy") val taxonomy: String? = null
 )
@@ -49,7 +49,7 @@ data class EmbeddedDto(
 
 @JsonClass(generateAdapter = true)
 data class WordPressPostDto(
-    @Json(name = "id") val id: Long = 0,
+    @Json(name = "id") val id: Long? = null,
     @Json(name = "date") val date: String? = null,
     @Json(name = "title") val title: RenderedTextDto? = null,
     @Json(name = "content") val content: RenderedTextDto? = null,

@@ -1,5 +1,6 @@
 package com.example.data.remote
 
+import com.example.BuildConfig
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.OkHttpClient
@@ -10,7 +11,7 @@ import java.util.concurrent.TimeUnit
 
 object WordPressClient {
 
-    private const val BASE_URL = "https://drheidarian.ir/wp-json/wp/v2/"
+    const val BASE_URL = "https://drheidarian.ir/wp-json/wp/v2/"
 
     private val moshi: Moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
@@ -18,7 +19,11 @@ object WordPressClient {
 
     private val okHttpClient: OkHttpClient by lazy {
         val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BASIC
+            level = if (BuildConfig.DEBUG) {
+                HttpLoggingInterceptor.Level.BASIC
+            } else {
+                HttpLoggingInterceptor.Level.NONE
+            }
         }
 
         OkHttpClient.Builder()
@@ -39,3 +44,4 @@ object WordPressClient {
             .create(WordPressApiService::class.java)
     }
 }
+

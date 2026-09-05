@@ -1,15 +1,18 @@
 package com.example.data.repository
 
+import android.util.Log
 import com.example.data.model.Article
 import com.example.data.model.ClinicInfo
 import com.example.data.model.ClinicVideo
 import com.example.data.model.ConsultationRequest
 import com.example.data.model.GalleryAlbum
 import com.example.data.model.GalleryImage
+import com.example.data.remote.WordPressApiService
 import com.example.data.remote.WordPressClient
-import com.example.data.remote.model.WordPressMediaDto
-import com.example.data.remote.model.WordPressPostDto
+import com.example.data.remote.WordPressMapper
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Query
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -26,116 +29,219 @@ interface ClinicRepository {
 }
 
 class ClinicRepositoryImpl(
-    private val firestore: FirebaseFirestore? = try { FirebaseFirestore.getInstance() } catch (e: Exception) { null }
+    private val firestore: FirebaseFirestore? = try { FirebaseFirestore.getInstance() } catch (e: Exception) { null },
+    private val wordpressApi: WordPressApiService = WordPressClient.apiService
 ) : ClinicRepository {
 
     override suspend fun getArticles(): Result<List<Article>> = withContext(Dispatchers.IO) {
         // 1. Try to fetch live posts from drheidarian.ir WordPress REST API
         try {
-            val wpPosts = WordPressClient.apiService.getPosts(perPage = 20)
+            val wpPosts = wordpressApi.getPosts(embed = true, perPage = 20)
             if (wpPosts.isNotEmpty()) {
-                val mappedArticles = wpPosts.map { post -> mapWordPressPostToArticle(post) }
+                val fallbackImg = DefaultData.articles.firstOrNull()?.imageUrl.orEmpty()
+                val mappedArticles = wpPosts.mapNotNull { post ->
+                    WordPressMapper.mapWordPressPostToArticle(post, fallbackImg)
+                }
                 if (mappedArticles.isNotEmpty()) {
                     return@withContext Result.success(mappedArticles)
                 }
             }
-        } catch (_: Exception) {
-            // Graceful fallback to offline or Firestore
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("ClinicRepository", "WordPress API getPosts failed, falling back", e)
         }
 
-        // 2. Try Firestore if available
+        // 2. Try Firestore if available (ordered by date with fallback)
         try {
             if (firestore != null) {
-                val snapshot = firestore.collection("articles")
-                    .get()
-                    .await()
+                val snapshot = try {
+                    firestore.collection("articles")
+                        .orderBy("date", Query.Direction.DESCENDING)
+                        .get()
+                        .await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("ClinicRepository", "Ordered Firestore query failed, falling back to unordered", e)
+                    firestore.collection("articles").get().await()
+                }
 
                 if (!snapshot.isEmpty) {
                     val articles = snapshot.documents.mapNotNull { doc ->
                         doc.toObject(Article::class.java)?.copy(id = doc.id)
                     }
                     if (articles.isNotEmpty()) {
-                        return@withContext Result.success(articles)
+                        val sortedArticles = articles.sortedByDescending { it.date }
+                        return@withContext Result.success(sortedArticles)
                     }
                 }
             }
-        } catch (_: Exception) { }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("ClinicRepository", "Firestore getArticles failed", e)
+        }
 
         // 3. Fallback to curated Dr. Heidarian clinic data
         Result.success(DefaultData.articles)
     }
 
     override suspend fun getArticleById(id: String): Result<Article> = withContext(Dispatchers.IO) {
-        val articlesResult = getArticles()
-        if (articlesResult.isSuccess) {
-            val found = articlesResult.getOrNull()?.find { it.id == id }
-            if (found != null) return@withContext Result.success(found)
+        if (id.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("شناسه مقاله نامعتبر است"))
         }
 
-        val localArticle = DefaultData.articles.find { it.id == id }
-            ?: DefaultData.articles.firstOrNull()
-        if (localArticle != null) {
-            Result.success(localArticle)
-        } else {
-            Result.failure(NoSuchElementException("مقاله یافت نشد"))
-        }
-    }
-
-    override suspend fun getGalleryAlbums(): Result<List<GalleryAlbum>> = withContext(Dispatchers.IO) {
-        // 1. Try to fetch live media (Media ID & URL) from drheidarian.ir WordPress REST API
-        try {
-            val wpMedia = WordPressClient.apiService.getMedia(perPage = 40)
-            val validMediaImages = wpMedia
-                .filter { it.sourceUrl?.isNotBlank() == true }
-                .map { media -> mapWordPressMediaToGalleryImage(media) }
-
-            if (validMediaImages.isNotEmpty()) {
-                val wpAlbum = GalleryAlbum(
-                    id = "wp_live_media",
-                    title = "گالری تصاویر اختصاصی دکتر حیدریان",
-                    description = "تصاویر و مستندات بالینی بارگذاری‌شده در وب‌سایت رسمی drheidarian.ir",
-                    coverImageUrl = validMediaImages.first().imageUrl,
-                    images = validMediaImages
-                )
-                val combinedAlbums = listOf(wpAlbum) + DefaultData.galleryAlbums
-                return@withContext Result.success(combinedAlbums)
+        // 1. If it's a WordPress article ID: "wp_123"
+        if (id.startsWith("wp_")) {
+            val numericId = id.removePrefix("wp_").toLongOrNull()
+            if (numericId != null && numericId > 0) {
+                try {
+                    val postDto = wordpressApi.getPostById(numericId, embed = true)
+                    val fallbackImg = DefaultData.articles.firstOrNull()?.imageUrl.orEmpty()
+                    val mapped = WordPressMapper.mapWordPressPostToArticle(postDto, fallbackImg)
+                    if (mapped != null) {
+                        return@withContext Result.success(mapped)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("ClinicRepository", "Error fetching WordPress post $id by ID", e)
+                }
             }
-        } catch (_: Exception) {
-            // Graceful fallback
         }
 
         // 2. Try Firestore if available
         try {
             if (firestore != null) {
-                val snapshot = firestore.collection("gallery_albums").get().await()
-                if (!snapshot.isEmpty) {
-                    val albums = snapshot.documents.mapNotNull { doc ->
-                        doc.toObject(GalleryAlbum::class.java)?.copy(id = doc.id)
-                    }
-                    if (albums.isNotEmpty()) {
-                        return@withContext Result.success(albums)
+                val doc = firestore.collection("articles").document(id).get().await()
+                if (doc.exists()) {
+                    val article = doc.toObject(Article::class.java)?.copy(id = doc.id)
+                    if (article != null) {
+                        return@withContext Result.success(article)
                     }
                 }
             }
-        } catch (_: Exception) { }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("ClinicRepository", "Error fetching article $id from Firestore", e)
+        }
 
-        Result.success(DefaultData.galleryAlbums)
+        // 3. Fallback to local DefaultData (ONLY matching ID)
+        val localArticle = DefaultData.articles.find { it.id == id }
+        if (localArticle != null) {
+            return@withContext Result.success(localArticle)
+        }
+
+        Result.failure(NoSuchElementException("مقاله با شناسه $id یافت نشد"))
+    }
+
+    override suspend fun getGalleryAlbums(): Result<List<GalleryAlbum>> = withContext(Dispatchers.IO) {
+        // 1. Try to fetch live media (Media ID & URL) from drheidarian.ir WordPress REST API
+        val liveWpAlbum: GalleryAlbum? = try {
+            val wpMedia = wordpressApi.getMedia(perPage = 40)
+            val validMediaImages = wpMedia.mapNotNull { WordPressMapper.mapWordPressMediaToGalleryImage(it) }
+
+            if (validMediaImages.isNotEmpty()) {
+                val coverUrl = validMediaImages.firstOrNull()?.resolvedUrl.orEmpty()
+                GalleryAlbum(
+                    id = "wp_live_media",
+                    title = "گالری تصاویر اختصاصی دکتر حیدریان",
+                    description = "تصاویر و مستندات بالینی بارگذاری‌شده در وب‌سایت رسمی drheidarian.ir",
+                    coverImageUrl = coverUrl,
+                    images = validMediaImages
+                )
+            } else {
+                null
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("ClinicRepository", "WordPress API getMedia failed", e)
+            null
+        }
+
+        // 2. Try Firestore if available
+        val firestoreAlbums = try {
+            if (firestore != null) {
+                val snapshot = firestore.collection("gallery_albums").get().await()
+                if (!snapshot.isEmpty) {
+                    snapshot.documents.mapNotNull { doc ->
+                        doc.toObject(GalleryAlbum::class.java)?.copy(id = doc.id)
+                    }
+                } else emptyList()
+            } else emptyList()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("ClinicRepository", "Firestore getGalleryAlbums failed", e)
+            emptyList()
+        }
+
+        val baseAlbums = if (firestoreAlbums.isNotEmpty()) firestoreAlbums else DefaultData.galleryAlbums
+        val combinedAlbums = if (liveWpAlbum != null) {
+            listOf(liveWpAlbum) + baseAlbums
+        } else {
+            baseAlbums
+        }
+
+        Result.success(combinedAlbums)
     }
 
     override suspend fun getGalleryAlbumById(id: String): Result<GalleryAlbum> = withContext(Dispatchers.IO) {
-        val albumsResult = getGalleryAlbums()
-        if (albumsResult.isSuccess) {
-            val found = albumsResult.getOrNull()?.find { it.id == id }
-            if (found != null) return@withContext Result.success(found)
+        if (id.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("شناسه آلبوم نامعتبر است"))
         }
 
-        val localAlbum = DefaultData.galleryAlbums.find { it.id == id }
-            ?: DefaultData.galleryAlbums.firstOrNull()
-        if (localAlbum != null) {
-            Result.success(localAlbum)
-        } else {
-            Result.failure(NoSuchElementException("آلبوم یافت نشد"))
+        // 1. If requesting the synthetic WordPress media album "wp_live_media"
+        if (id == "wp_live_media") {
+            try {
+                val wpMedia = wordpressApi.getMedia(perPage = 40)
+                val validMediaImages = wpMedia.mapNotNull { WordPressMapper.mapWordPressMediaToGalleryImage(it) }
+                if (validMediaImages.isNotEmpty()) {
+                    val coverUrl = validMediaImages.firstOrNull()?.resolvedUrl.orEmpty()
+                    return@withContext Result.success(
+                        GalleryAlbum(
+                            id = "wp_live_media",
+                            title = "گالری تصاویر اختصاصی دکتر حیدریان",
+                            description = "تصاویر و مستندات بالینی بارگذاری‌شده در وب‌سایت رسمی drheidarian.ir",
+                            coverImageUrl = coverUrl,
+                            images = validMediaImages
+                        )
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("ClinicRepository", "Error fetching live media for album $id", e)
+            }
         }
+
+        // 2. Try Firestore if available
+        try {
+            if (firestore != null) {
+                val doc = firestore.collection("gallery_albums").document(id).get().await()
+                if (doc.exists()) {
+                    val album = doc.toObject(GalleryAlbum::class.java)?.copy(id = doc.id)
+                    if (album != null) {
+                        return@withContext Result.success(album)
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("ClinicRepository", "Error fetching album $id from Firestore", e)
+        }
+
+        // 3. Fallback to local DefaultData (ONLY matching ID)
+        val localAlbum = DefaultData.galleryAlbums.find { it.id == id }
+        if (localAlbum != null) {
+            return@withContext Result.success(localAlbum)
+        }
+
+        Result.failure(NoSuchElementException("آلبوم با شناسه $id یافت نشد"))
     }
 
     override suspend fun getVideos(): Result<List<ClinicVideo>> = withContext(Dispatchers.IO) {
@@ -151,16 +257,40 @@ class ClinicRepositoryImpl(
                     }
                 }
             }
-        } catch (_: Exception) { }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("ClinicRepository", "Firestore getVideos failed", e)
+        }
         Result.success(DefaultData.videos)
     }
 
     override suspend fun getVideoById(id: String): Result<ClinicVideo> = withContext(Dispatchers.IO) {
-        val localVideo = DefaultData.videos.find { it.id == id } ?: DefaultData.videos.firstOrNull()
+        if (id.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("شناسه ویدیو نامعتبر است"))
+        }
+
+        try {
+            if (firestore != null) {
+                val doc = firestore.collection("clinic_videos").document(id).get().await()
+                if (doc.exists()) {
+                    val video = doc.toObject(ClinicVideo::class.java)?.copy(id = doc.id)
+                    if (video != null) {
+                        return@withContext Result.success(video)
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("ClinicRepository", "Firestore getVideoById failed", e)
+        }
+
+        val localVideo = DefaultData.videos.find { it.id == id }
         if (localVideo != null) {
             Result.success(localVideo)
         } else {
-            Result.failure(NoSuchElementException("ویدیو یافت نشد"))
+            Result.failure(NoSuchElementException("ویدیو با شناسه $id یافت نشد"))
         }
     }
 
@@ -169,99 +299,28 @@ class ClinicRepositoryImpl(
     }
 
     override suspend fun sendConsultationRequest(request: ConsultationRequest): Result<String> = withContext(Dispatchers.IO) {
+        if (firestore == null) {
+            return@withContext Result.failure(
+                IllegalStateException("سیستم ثبت مشاوره آنلاین در حال حاضر در دسترس نیست. لطفاً با شماره تلفن کلینیک تماس بگیرید.")
+            )
+        }
+
         try {
             val requestId = if (request.id.isBlank()) "DRH-${System.currentTimeMillis().toString().takeLast(6)}" else request.id
             val finalRequest = request.copy(id = requestId, timestamp = System.currentTimeMillis())
 
-            if (firestore != null) {
-                firestore.collection("consultation_requests")
-                    .document(requestId)
-                    .set(finalRequest)
-                    .await()
-            }
+            firestore.collection("consultation_requests")
+                .document(requestId)
+                .set(finalRequest)
+                .await()
+
             Result.success(requestId)
-        } catch (_: Exception) {
-            val localId = "DRH-${System.currentTimeMillis().toString().takeLast(6)}"
-            Result.success(localId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e("ClinicRepository", "Failed to submit consultation request", e)
+            Result.failure(e)
         }
-    }
-
-    private fun mapWordPressPostToArticle(post: WordPressPostDto): Article {
-        val rawTitle = post.title?.rendered.orEmpty()
-        val rawContent = post.content?.rendered.orEmpty()
-        val rawExcerpt = post.excerpt?.rendered.orEmpty()
-
-        val cleanTitle = cleanHtml(rawTitle).ifBlank { "مقاله تخصصی درد و ستون فقرات" }
-        val cleanContent = cleanHtml(rawContent)
-        val cleanSummary = cleanHtml(rawExcerpt).ifBlank {
-            cleanContent.take(180).plus("...")
-        }
-
-        val imageUrl = post.embedded?.featuredMedia?.firstOrNull()?.sourceUrl
-            ?: DefaultData.articles.first().imageUrl
-
-        val category = post.embedded?.terms?.flatten()?.firstOrNull { it.taxonomy == "category" }?.name
-            ?: "جراحی بسته و درمان درد"
-
-        val formattedDate = post.date?.take(10)?.replace("-", "/") ?: "به‌روزرسانی جدید"
-
-        return Article(
-            id = "wp_${post.id}",
-            title = cleanTitle,
-            summary = cleanSummary,
-            content = cleanContent.ifBlank { cleanSummary },
-            imageUrl = imageUrl,
-            category = category,
-            readTimeMinutes = (cleanContent.length / 450).coerceIn(3, 10),
-            date = formattedDate,
-            author = "دکتر مجید حیدریان",
-            tags = listOf("دکتر حیدریان", "کلینیک درد ماهان", "ستون فقرات")
-        )
-    }
-
-    private fun mapWordPressMediaToGalleryImage(media: WordPressMediaDto): GalleryImage {
-        val title = cleanHtml(media.title?.rendered).ifBlank {
-            cleanHtml(media.altText).ifBlank { "تصویر بالینی و درمانی" }
-        }
-        val caption = cleanHtml(media.caption?.rendered).ifBlank {
-            cleanHtml(media.altText)
-        }
-        val url = media.sourceUrl.orEmpty()
-        val mediaId = media.id.toString()
-
-        return GalleryImage(
-            id = "wp_media_$mediaId",
-            mediaId = mediaId,
-            title = title,
-            imageUrl = url,
-            url = url,
-            caption = caption
-        )
-    }
-
-    private fun cleanHtml(html: String?): String {
-        if (html.isNullOrBlank()) return ""
-        return html
-            .replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
-            .replace(Regex("</p>", RegexOption.IGNORE_CASE), "\n\n")
-            .replace(Regex("</li>", RegexOption.IGNORE_CASE), "\n")
-            .replace(Regex("<li>", RegexOption.IGNORE_CASE), "• ")
-            .replace(Regex("<h[1-6]>", RegexOption.IGNORE_CASE), "\n\n")
-            .replace(Regex("</h[1-6]>", RegexOption.IGNORE_CASE), "\n")
-            .replace(Regex("<[^>]*>"), "")
-            .replace("&nbsp;", " ")
-            .replace("&zwnj;", "\u200C")
-            .replace("&amp;", "&")
-            .replace("&quot;", "\"")
-            .replace("&#8211;", "–")
-            .replace("&#8212;", "—")
-            .replace("&#8216;", "‘")
-            .replace("&#8217;", "’")
-            .replace("&#8220;", "“")
-            .replace("&#8221;", "”")
-            .replace("&hellip;", "…")
-            .replace(Regex("\n{3,}"), "\n\n")
-            .trim()
     }
 }
 

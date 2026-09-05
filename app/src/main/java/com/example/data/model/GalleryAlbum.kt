@@ -2,14 +2,17 @@ package com.example.data.model
 
 data class GalleryImage(
     val id: String = "",
-    val mediaId: String = id,
+    val mediaId: String = "",
     val title: String = "",
     val imageUrl: String = "",
-    val url: String = imageUrl,
+    val url: String = "",
     val caption: String = ""
 ) {
-    // Resolved image URL whether 'url' or 'imageUrl' is supplied
-    fun getResolvedUrl(): String = if (imageUrl.isNotBlank()) imageUrl else url
+    val resolvedUrl: String
+        get() = imageUrl.trim().ifBlank { url.trim() }
+
+    val resolvedMediaId: String
+        get() = mediaId.trim().ifBlank { id.trim() }
 }
 
 data class GalleryAlbum(
@@ -19,3 +22,4 @@ data class GalleryAlbum(
     val coverImageUrl: String = "",
     val images: List<GalleryImage> = emptyList()
 )
+

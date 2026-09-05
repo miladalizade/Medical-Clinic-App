@@ -133,7 +133,7 @@ fun GalleryAlbumCard(
             ) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
-                        .data(album.coverImageUrl.ifBlank { album.images.firstOrNull()?.imageUrl })
+                        .data(album.coverImageUrl.ifBlank { album.images.firstOrNull()?.resolvedUrl.orEmpty() })
                         .crossfade(true)
                         .build(),
                     contentDescription = album.title,
