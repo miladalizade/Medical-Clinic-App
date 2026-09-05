@@ -48,6 +48,40 @@ data class EmbeddedDto(
 )
 
 @JsonClass(generateAdapter = true)
+data class WordPressImageMetaDto(
+    @Json(name = "gallery") val gallery: Any? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class WordPressImageCptDto(
+    @Json(name = "id") val id: Long? = null,
+    @Json(name = "date") val date: String? = null,
+    @Json(name = "title") val title: RenderedTextDto? = null,
+    @Json(name = "content") val content: RenderedTextDto? = null,
+    @Json(name = "excerpt") val excerpt: RenderedTextDto? = null,
+    @Json(name = "featured_media") val featuredMediaId: Long? = null,
+    @Json(name = "meta") val meta: WordPressImageMetaDto? = null,
+    @Json(name = "_embedded") val embedded: EmbeddedDto? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class WordPressVideoMetaDto(
+    @Json(name = "aparat-code") val aparatCode: Any? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class WordPressVideoCptDto(
+    @Json(name = "id") val id: Long? = null,
+    @Json(name = "date") val date: String? = null,
+    @Json(name = "title") val title: RenderedTextDto? = null,
+    @Json(name = "content") val content: RenderedTextDto? = null,
+    @Json(name = "excerpt") val excerpt: RenderedTextDto? = null,
+    @Json(name = "featured_media") val featuredMediaId: Long? = null,
+    @Json(name = "meta") val meta: WordPressVideoMetaDto? = null,
+    @Json(name = "_embedded") val embedded: EmbeddedDto? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class WordPressPostDto(
     @Json(name = "id") val id: Long? = null,
     @Json(name = "date") val date: String? = null,

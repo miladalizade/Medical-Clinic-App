@@ -2,9 +2,13 @@ package com.example.data.remote
 
 import androidx.core.text.HtmlCompat
 import com.example.data.model.Article
+import com.example.data.model.ClinicVideo
+import com.example.data.model.GalleryAlbum
 import com.example.data.model.GalleryImage
+import com.example.data.remote.model.WordPressImageCptDto
 import com.example.data.remote.model.WordPressMediaDto
 import com.example.data.remote.model.WordPressPostDto
+import com.example.data.remote.model.WordPressVideoCptDto
 
 object WordPressMapper {
 
@@ -194,6 +198,198 @@ object WordPressMapper {
             date = formattedDate,
             author = "دکتر مجید حیدریان",
             tags = listOf("دکتر حیدریان", "کلینیک درد ماهان", "ستون فقرات")
+        )
+    }
+
+    fun extractMediaIds(galleryValue: Any?): List<Long> {
+        return when (galleryValue) {
+            is List<*> -> galleryValue.mapNotNull { item ->
+                when (item) {
+                    is Number -> item.toLong()
+                    is String -> item.trim().toLongOrNull()
+                    else -> null
+                }
+            }.filter { it > 0 }
+            is String -> galleryValue.split(",", " ", ";")
+                .mapNotNull { it.trim().toLongOrNull() }
+                .filter { it > 0 }
+            is Number -> if (galleryValue.toLong() > 0) listOf(galleryValue.toLong()) else emptyList()
+            else -> emptyList()
+        }
+    }
+
+    fun normalizeAparatCode(rawInput: String?): String? {
+        if (rawInput.isNullOrBlank()) return null
+        val trimmed = rawInput.trim()
+
+        // 1. If it contains an iframe: extract src attribute
+        if (trimmed.contains("<iframe", ignoreCase = true)) {
+            val srcMatch = Regex("""src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(trimmed)
+            val src = srcMatch?.groupValues?.get(1)?.trim()
+            if (!src.isNullOrBlank()) {
+                return normalizeAparatCode(src)
+            }
+        }
+
+        // 2. If it contains script or HTML tags, extract URL or video hash
+        if (trimmed.contains("<script", ignoreCase = true) || trimmed.contains("<")) {
+            val urlMatch = Regex("""https?://[^\s"'>]+""").find(trimmed)
+            if (urlMatch != null) {
+                return normalizeAparatCode(urlMatch.value)
+            }
+            val hashMatch = Regex("""\b([a-zA-Z0-9_-]{4,15})\b""").find(trimmed)
+            if (hashMatch != null) {
+                return "https://www.aparat.com/video/video/embed/videohash/${hashMatch.groupValues[1]}/vt/frame"
+            }
+            return null
+        }
+
+        // 3. If it's already an embed URL: https://www.aparat.com/video/video/embed/videohash/xxxx/vt/frame
+        val embedRegex = Regex("""(?:https?:)?//(?:www\.)?aparat\.com/video/video/embed/videohash/([a-zA-Z0-9_-]+)""", RegexOption.IGNORE_CASE)
+        val embedMatch = embedRegex.find(trimmed)
+        if (embedMatch != null) {
+            val hash = embedMatch.groupValues[1]
+            return "https://www.aparat.com/video/video/embed/videohash/$hash/vt/frame"
+        }
+
+        // 4. If it's a standard Aparat watch URL: https://www.aparat.com/v/xxxx
+        val watchRegex = Regex("""(?:https?:)?//(?:www\.)?aparat\.com/v/([a-zA-Z0-9_-]+)""", RegexOption.IGNORE_CASE)
+        val watchMatch = watchRegex.find(trimmed)
+        if (watchMatch != null) {
+            val hash = watchMatch.groupValues[1]
+            return "https://www.aparat.com/video/video/embed/videohash/$hash/vt/frame"
+        }
+
+        // 5. Alternate Aparat embed URL: https://www.aparat.com/embed/xxxx
+        val altEmbedRegex = Regex("""(?:https?:)?//(?:www\.)?aparat\.com/embed/([a-zA-Z0-9_-]+)""", RegexOption.IGNORE_CASE)
+        val altEmbedMatch = altEmbedRegex.find(trimmed)
+        if (altEmbedMatch != null) {
+            val hash = altEmbedMatch.groupValues[1]
+            return "https://www.aparat.com/video/video/embed/videohash/$hash/vt/frame"
+        }
+
+        // 6. Direct video hash code (4 to 15 alphanumeric/dash/underscore chars)
+        val cleanHashRegex = Regex("""^[a-zA-Z0-9_-]{4,15}$""")
+        if (cleanHashRegex.matches(trimmed)) {
+            return "https://www.aparat.com/video/video/embed/videohash/$trimmed/vt/frame"
+        }
+
+        // 7. Generic valid HTTP/HTTPS URL
+        if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
+            return trimmed
+        }
+
+        return null
+    }
+
+    fun mapWordPressImageCptToGalleryAlbum(
+        post: WordPressImageCptDto,
+        resolvedMediaMap: Map<Long, GalleryImage> = emptyMap()
+    ): GalleryAlbum? {
+        val postId = post.id
+        if (postId == null || postId <= 0) return null
+
+        val rawTitle = post.title?.rendered.orEmpty()
+        val rawContent = post.content?.rendered.orEmpty()
+        val rawExcerpt = post.excerpt?.rendered.orEmpty()
+
+        val cleanTitle = cleanHtml(rawTitle).ifBlank { "آلبوم تصاویر کلینیک" }
+        val cleanContent = cleanHtml(rawContent)
+        val cleanExcerpt = cleanHtml(rawExcerpt)
+        val cleanDescription = cleanExcerpt.ifBlank { cleanContent }.ifBlank {
+            "مجموعه تصاویر بالینی و درمانی کلینیک درد ماهان"
+        }
+
+        // Collect images from meta.gallery
+        val mediaIds = extractMediaIds(post.meta?.gallery)
+        val albumImages = mutableListOf<GalleryImage>()
+
+        for (id in mediaIds) {
+            val img = resolvedMediaMap[id]
+            if (img != null && img.resolvedUrl.isNotBlank()) {
+                albumImages.add(img)
+            }
+        }
+
+        // Check featured media from _embedded
+        val featuredUrl = post.embedded?.featuredMedia
+            ?.firstOrNull { !it.sourceUrl.isNullOrBlank() }
+            ?.sourceUrl?.trim().orEmpty()
+
+        if (featuredUrl.isNotBlank()) {
+            val alreadyPresent = albumImages.any { it.resolvedUrl == featuredUrl }
+            if (!alreadyPresent) {
+                val featMediaId = post.featuredMediaId?.toString().orEmpty()
+                val featAlt = post.embedded?.featuredMedia?.firstOrNull()?.altText.orEmpty()
+                val featTitle = cleanHtml(featAlt).ifBlank { cleanTitle }
+                albumImages.add(
+                    0,
+                    GalleryImage(
+                        id = "wp_media_${featMediaId.ifBlank { "cover_${postId}" }}",
+                        mediaId = featMediaId,
+                        title = featTitle,
+                        imageUrl = featuredUrl,
+                        url = featuredUrl,
+                        caption = cleanDescription
+                    )
+                )
+            }
+        }
+
+        // CRITICAL: An album must have at least one valid image
+        if (albumImages.isEmpty()) {
+            return null
+        }
+
+        val coverImageUrl = if (featuredUrl.isNotBlank()) {
+            featuredUrl
+        } else {
+            albumImages.first().resolvedUrl
+        }
+
+        return GalleryAlbum(
+            id = "wp_album_$postId",
+            title = cleanTitle,
+            description = cleanDescription,
+            coverImageUrl = coverImageUrl,
+            images = albumImages
+        )
+    }
+
+    fun mapWordPressVideoToClinicVideo(post: WordPressVideoCptDto): ClinicVideo? {
+        val postId = post.id
+        if (postId == null || postId <= 0) return null
+
+        val rawAparat = post.meta?.aparatCode?.toString()
+        val normalizedAparat = normalizeAparatCode(rawAparat)
+        // CRITICAL: Only include videos that have a valid aparat-code
+        if (normalizedAparat.isNullOrBlank()) {
+            return null
+        }
+
+        val rawTitle = post.title?.rendered.orEmpty()
+        val rawContent = post.content?.rendered.orEmpty()
+        val rawExcerpt = post.excerpt?.rendered.orEmpty()
+
+        val cleanTitle = cleanHtml(rawTitle).ifBlank { "ویدیوی آموزشی کلینیک درد ماهان" }
+        val cleanContent = cleanHtml(rawContent)
+        val cleanExcerpt = cleanHtml(rawExcerpt)
+        val cleanDescription = cleanExcerpt.ifBlank { cleanContent }.ifBlank {
+            "توضیحات ویدیوی آموزشی دکتر مجید حیدریان"
+        }
+
+        val thumbnailUrl = post.embedded?.featuredMedia
+            ?.firstOrNull { !it.sourceUrl.isNullOrBlank() }
+            ?.sourceUrl?.trim().orEmpty()
+
+        return ClinicVideo(
+            id = "wp_video_$postId",
+            title = cleanTitle,
+            description = cleanDescription,
+            thumbnailUrl = thumbnailUrl,
+            aparatEmbedCode = normalizedAparat,
+            category = "آموزشی",
+            duration = "ویدیو آموزشی"
         )
     }
 }
